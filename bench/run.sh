@@ -14,7 +14,8 @@
 #   GRPC_TOKEN      ("")        x-token for the endpoint
 #   INGEST_PROGRAMS ("...")     comma-separated base58 program owners to ingest (pick ACTIVE ones)
 #   INGEST_SECS     (600)       how long to ingest before benchmarking
-#   CAP             (4)         max-auto-indexes (keep tight so the freeze/eviction effect shows)
+#   CAP             (auto)      max-auto-indexes; blank = set to the #P1 patterns so the cap is
+#                               exactly full after phase A (that is what makes baseline freeze)
 #   THRESHOLD       (3)         index-generation-threshold (low so indexes form fast under load)
 #   RPS             (10)        benchmark target requests/sec
 #   PHASE_SECS      (180)       duration of each benchmark phase (B must be long enough for the
@@ -31,7 +32,7 @@ cd "$(dirname "$0")/.."
 GRPC_TOKEN="${GRPC_TOKEN:-}"
 INGEST_PROGRAMS="${INGEST_PROGRAMS:-675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8,whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc}"
 INGEST_SECS="${INGEST_SECS:-600}"
-CAP="${CAP:-4}"
+CAP="${CAP:-}"   # blank = auto (set to the number of P1 patterns after the workload is derived)
 THRESHOLD="${THRESHOLD:-3}"
 RPS="${RPS:-10}"
 PHASE_SECS="${PHASE_SECS:-180}"
@@ -157,11 +158,9 @@ timeout_secs = 60
 [source]
 type = "json_file"
 path = "$GEN/pool_$1.json"
-[comparison]
-enable_slot_compensation = false
-ratio = 0.0
-save_mismatches = false
-mismatch_output_dir = "$RES"
+# No [comparison] section on purpose: that selects the one-sided path in
+# process_request (send to rpc1 and record latency). With [comparison] present,
+# ratio gates BOTH endpoints, so ratio=0.0 would send nothing at all.
 [print_config]
 min_request_bytes = 0
 min_request_duration_ms = 0
@@ -211,7 +210,11 @@ for row in "${ROWS[@]}"; do [ $((i % 2)) -eq 0 ] && P1+=("$row") || P2+=("$row")
 build_pool "$GEN/pool_p1.json" "${P1[@]}"
 build_pool "$GEN/pool_p2.json" "${P2[@]}"
 gen_bench p1; gen_bench p2
+# The cap must be exactly the number of P1 patterns: P1 fills it, so baseline freezes P2 out
+# (nothing left for eviction to fix otherwise). Auto unless the user pinned CAP.
+[ -z "$CAP" ] && CAP="${#P1[@]}"
 echo "    P1 programs: ${P1[*]%%|*}"; echo "    P2 programs: ${P2[*]%%|*}"
+echo "    max-auto-indexes (cap) = $CAP  (P1 patterns: ${#P1[@]}, P2 patterns: ${#P2[@]})"
 
 # ---- 3. run one variant ------------------------------------------------------------------------
 measure() { # $1=label
