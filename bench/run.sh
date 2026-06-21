@@ -241,8 +241,10 @@ run_variant() { # $1=name
 gen_qt baseline false
 run_variant baseline
 
-echo "==> resetting index state (drop auto-indexes + clear registry); account data untouched"
-PSQL -c "DO \$\$ DECLARE r record; BEGIN FOR r IN SELECT indexname FROM pg_indexes WHERE schemaname='public' AND (indexname LIKE 'idx_accounts_%' OR indexname LIKE 'idx_snapshot_accounts_%') LOOP EXECUTE 'DROP INDEX IF EXISTS '||quote_ident(r.indexname); END LOOP; END \$\$;"
+echo "==> resetting index state (drop ONLY registry-tracked auto-indexes); account + migration indexes untouched"
+# Drop by the registry, not by name LIKE 'idx_accounts_%' — that prefix also matches the
+# migration's own indexes (idx_accounts_pubkey_slot, ...), which must survive the reset.
+PSQL -c "DO \$\$ DECLARE r record; BEGIN FOR r IN SELECT index_name FROM auto_index_usage LOOP EXECUTE 'DROP INDEX IF EXISTS '||quote_ident(r.index_name); END LOOP; END \$\$;"
 PSQL -c "TRUNCATE auto_index_usage" 2>/dev/null || true
 
 gen_qt patched true
